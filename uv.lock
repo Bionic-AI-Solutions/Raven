@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform != 'win32'",
@@ -13,6 +13,7 @@ members = [
     "design-engine",
     "everos-cloud-memory",
     "everos-memory",
+    "letta-memory",
     "ppt-engine",
     "raven",
 ]
@@ -2210,6 +2211,21 @@ wheels = [
 ]
 
 [[package]]
+name = "letta-memory"
+version = "0.1.0"
+source = { editable = "plugins-dist/letta-memory" }
+dependencies = [
+    { name = "httpx" },
+    { name = "raven" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "raven", editable = "." },
+]
+
+[[package]]
 name = "license-expression"
 version = "30.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -4323,6 +4339,7 @@ channels = [
 dev = [
     { name = "design-engine" },
     { name = "everos-memory" },
+    { name = "letta-memory" },
     { name = "ppt-engine" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -4353,6 +4370,7 @@ dev = [
     { name = "import-linter" },
     { name = "json-repair" },
     { name = "jsonschema" },
+    { name = "letta-memory" },
     { name = "lxml-stubs" },
     { name = "markdown" },
     { name = "packaging" },
@@ -4394,6 +4412,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.30.0" },
     { name = "lancedb", specifier = ">=0.33,<1.0" },
     { name = "lark-oapi", marker = "extra == 'channel-feishu'", specifier = ">=1.5.0,<2.0.0" },
+    { name = "letta-memory", marker = "extra == 'dev'", editable = "plugins-dist/letta-memory" },
     { name = "litellm", specifier = ">=1.82.1,<2.0.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "lxml", specifier = ">=5.0,<7" },
@@ -4473,6 +4492,7 @@ dev = [
     { name = "import-linter", specifier = ">=2.14" },
     { name = "json-repair", specifier = ">=0.59.5" },
     { name = "jsonschema", specifier = ">=4.23.0" },
+    { name = "letta-memory", editable = "plugins-dist/letta-memory" },
     { name = "lxml-stubs", specifier = ">=0.5.1" },
     { name = "markdown", specifier = ">=3.10" },
     { name = "packaging", specifier = ">=26.1" },
