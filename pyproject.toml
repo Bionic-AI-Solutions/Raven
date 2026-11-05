@@ -192,6 +192,7 @@ dev = [
     "everos-memory",
     "ppt-engine",
     "design-engine",
+    "letta-memory",
 ]
 eval = [
     # benchmarks/proactivity_eval PROBE adapter (deprioritized stretch test) needs
@@ -282,6 +283,7 @@ everos-memory = { workspace = true }
 ppt-engine = { workspace = true }
 design-engine = { workspace = true }
 everos-cloud-memory = { workspace = true }
+letta-memory = { workspace = true }
 
 [tool.uv]
 constraint-dependencies = [
@@ -445,7 +447,7 @@ target-version = "py312"
 # The distributables beside the host wheel are first-party to this repo's
 # lint: without their root here, ruff reads `raven_everos` as a third-party
 # package and wants its imports in another block than `raven`'s.
-src = [".", "plugins-dist/everos-memory", "plugins-dist/everos-cloud-memory", "plugins-dist/ppt-engine", "plugins-dist/design-engine"]
+src = [".", "plugins-dist/everos-memory", "plugins-dist/everos-cloud-memory", "plugins-dist/ppt-engine", "plugins-dist/design-engine", "plugins-dist/letta-memory"]
 extend-exclude = [
     # Byte snapshots of the retired vendored fork: the records the parity
     # guards compare against. Reformatting a record destroys its fidelity.
@@ -479,6 +481,8 @@ max-complexity = 40
 # unused variables, deferred imports, ambiguous names — idiomatic in tests, not
 # product code. (Auto-fixable churn E702/F401/I001 is left for the reformat branch.)
 "tests/**" = ["E402", "E741", "F811", "F841", "N802", "N805", "N806", "N817", "N818", "S101", "S105", "S106", "S107", "S607"]
+# Workspace plugin test trees follow the same conventions as the host suite.
+"plugins-dist/**/tests/**" = ["E402", "E741", "F811", "F841", "N802", "N805", "N806", "N817", "N818", "S101", "S105", "S106", "S107", "S607"]
 
 # A port kept recognisable against its original (Infinity's `rag_tokenizer`).
 # The names are upstream's -- `preTks`, `_strQ2B`, and single capitals for the
@@ -606,6 +610,7 @@ markers = [
     "llm_judge: uses an LLM as a grader for extraction quality (extra cost / non-determinism); opt-in",
     "slow: real subprocess, tool or render that cannot be faked and still runs in the default selection (e2e does not); exempt from the idle ceiling",
     "production_timing: proves a timing property or asserts a production delay constant; exempt from the suite's shortening of retry and grace ladders and from the idle ceiling",
+    "letta_live: drives a real Letta server (LETTA_LIVE=1 + LETTA_URL/LETTA_TOKEN_FILE/LETTA_AGENT_ID); opt-in, never in shared CI",
 ]
 
 [tool.coverage.run]
@@ -641,6 +646,7 @@ output = "coverage.json"
 dev = [
     "deptry>=0.25.1",
     "everos-cloud-memory",
+    "letta-memory",
     "grimp>=3.16",
     "hatchling>=1.32.0",
     "import-linter>=2.14",

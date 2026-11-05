@@ -1,0 +1,27 @@
+# Raven plugin manifest — discovered by the plugin registry beside the
+# `raven.plugins` entry point. See plugins/everos-memory for the pattern.
+
+[plugin]
+id = "letta-memory"
+version = "0.1.0"
+display = "Letta memory"
+description = "Session learnings in a Letta server's archival memory: recall searches it, store writes the turn into it, delete removes the passage. Reads url / token / letta_agent_id from its config slice, falling back to the LETTA_URL / LETTA_TOKEN / LETTA_AGENT_ID environment."
+raven = ">=0.2,<0.3"
+bundled = false
+
+[[plugin.contributes.memory_backends]]
+name = "letta"
+factory = "raven_letta.backend:make_backend"
+
+# The keys this plugin reads from its slice of plugins.letta-memory
+# (or plugins.letta, the backend-name fallback the resolver also tries).
+# The registry applies these defaults and type-checks these values at the
+# door, before the factory boards.
+[plugin.config_schema]
+url = { type = "string" }
+token = { type = "string" }
+letta_agent_id = { type = "string" }
+recall_timeout_s = { type = "number", default = 3.5 }
+store_timeout_s = { type = "number", default = 20.0 }
+health_timeout_s = { type = "number", default = 5.0 }
+store_max_chars = { type = "integer", default = 8000 }
