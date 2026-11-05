@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -58,7 +59,7 @@ async def _raw_list_tags() -> list[dict]:
 
 
 @pytest.fixture
-async def marker() -> str:
+async def marker() -> AsyncIterator[str]:
     token = f"letta-live-{uuid.uuid4().hex[:12]}"
     yield token
     # Cleanup: delete any passage carrying this run's marker.
