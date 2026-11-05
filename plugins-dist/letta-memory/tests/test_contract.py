@@ -182,6 +182,68 @@ class TestWireShape:
         await backend.recall_session("sess-42")
         assert mock.requests[-1].url.params.get_list("tags") == ["raven:session:sess-42"]
 
+    async def test_recall_session_accepts_host_track_kwargs(self) -> None:
+        """The host calls recall_session(session_id, user_id=…) / (…, agent_id=…)
+        per track (raven/agent/subagent_memory.py); the kwargs must be accepted
+        AND honoured as a tag filter."""
+        mock = MockLetta()
+        backend = _backend(mock)
+        await backend.recall_session("sess-1", user_id="salil")
+        assert mock.requests[-1].url.params.get_list("tags") == [
+            "raven:session:sess-1",
+            "raven:user:salil",
+        ]
+        await backend.recall_session("sess-1", agent_id="dsh")
+        assert mock.requests[-1].url.params.get_list("tags") == [
+            "raven:session:sess-1",
+            "raven:agent:dsh",
+        ]
+
+    async def test_recall_both_ids_is_a_caller_bug_returning_empty(self) -> None:
+        """contracts/memory.py: 'Passing neither or both is a caller bug —
+        return []' — the plugin must not silently pick a track."""
+        mock = MockLetta()
+        backend = _backend(mock)
+        assert await backend.recall("q", user_id="u", agent_id="a", top_k=5) == []
+        assert mock.requests == []
+
+    async def test_feedback_accepts_keyword_signals(self) -> None:
+        mock = MockLetta()
+        backend = _backend(mock)
+        await backend.feedback(signals={"kind": "x"})
+
+    async def test_delete_refuses_traversal_shapes_before_the_request(self) -> None:
+        """Round-1 review: an unquoted id of ``..`` resolved to the agent
+        resource and deleted it on the live server. The plugin must never
+        send such a path at all, and must answer False, not raise."""
+        mock = MockLetta()
+        backend = _backend(mock)
+        for evil in ("..", ".", "../../x", "a/b", "a\\b"):
+            assert await backend.delete(evil) is False, evil
+        assert mock.requests == []
+
+    async def test_delete_encodes_odd_but_safe_ids(self) -> None:
+        mock = MockLetta()
+        backend = _backend(mock)
+        assert await backend.delete("pm%2e001 x") is False
+        # raw_path, not .path: httpx's logical view decodes unreserved
+        # escapes back; the WIRE bytes are what the server normalises.
+        raw = mock.requests[-1].url.raw_path.rsplit(b"/", 1)[-1]
+        assert raw == b"pm%252e001%20x"
+
+    async def test_tagged_ids_are_verbatim_no_collisions(self) -> None:
+        """Round-1 blocker-fix regression: the old sanitiser made "evil/x"
+        and "evil-x" share a tag and leak each other's passages; ids now
+        ride in tags verbatim, so a near-miss id must recall nothing."""
+        mock = MockLetta()
+        backend = _backend(mock)
+        assert await backend.store(
+            "s1", [{"role": "user", "content": "secret of evil/x"}], metadata={"user_id": "evil/x"}
+        )
+        assert await backend.recall("secret", user_id="evil-x", top_k=5) == []
+        hits = await backend.recall("secret", user_id="evil/x", top_k=5)
+        assert any("evil/x" in h.text for h in hits)
+
     async def test_delete_known_id_removes_the_passage(self) -> None:
         mock = MockLetta()
         backend = _backend(mock)

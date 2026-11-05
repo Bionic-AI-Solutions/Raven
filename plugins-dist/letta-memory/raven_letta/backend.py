@@ -59,6 +59,7 @@ import os
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -89,7 +90,21 @@ _CONNECT_TIMEOUT_S = 2.0
 _SESSION_RECALL_LIMIT = 200
 
 _TAG_NS = "raven"
-_TAG_SAFE_RE = re.compile(r"[^A-Za-z0-9_.\-]")
+# Live-server probe (2026-11-05): Letta accepts and round-trips arbitrary tag
+# strings ("evil/x", unicode, spaces) and filters them by exact match. So the
+# id goes into the tag VERBATIM — the earlier [^A-Za-z0-9_.-] sanitiser was a
+# guess about an unknown charset, and review round 1 proved its collisions
+# leak across nominally different ids ("evil/x" == "evil-x"). Only control
+# characters are dropped: they corrupt logs and terminal output, and no
+# real id legitimately contains them.
+_TAG_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+# A memory id is a path segment on the server. Review round 1 (2026-11-05)
+# showed an unquoted one normalises server-side — ``DELETE .../<id>`` with an
+# id of ``..`` resolved to the AGENT resource and deleted it. Reject anything
+# shaped like a traversal outright, and percent-encode what remains, so the
+# segment is data and never a route.
+_UNSAFE_ID_RE = re.compile(r"(?:^\.\.?$|[/\\])")
 
 
 def _num(value: Any, fallback: float) -> float:
@@ -99,10 +114,9 @@ def _num(value: Any, fallback: float) -> float:
         return fallback
 
 
-def _tag_safe(value: str) -> str:
-    """Coerce an identity into something tag-charset safe."""
-    slug = _TAG_SAFE_RE.sub("-", value.strip())[:120].strip("-")
-    return slug
+def _tag_clean(value: str) -> str:
+    """Id for a tag: verbatim except control characters (see the note above)."""
+    return _TAG_CTRL_RE.sub("", value.strip())
 
 
 class LettaBackend:
@@ -166,6 +180,10 @@ class LettaBackend:
         return httpx.Timeout(_num(self._config.get(key), fallback), connect=_CONNECT_TIMEOUT_S)
 
     # ── HTTP plumbing ──────────────────────────────────────────────────
+
+    def _agent_path(self, tail: str = "") -> str:
+        """The configured agent's REST path, with its id segment encoded."""
+        return f"/v1/agents/{quote(self._letta_agent_id, safe='')}{'/' + tail if tail else ''}"
 
     def _client_or_new(self) -> httpx.AsyncClient:
         """The shared client, (re)built when absent or previously stopped.
@@ -235,10 +253,10 @@ class LettaBackend:
 
     @staticmethod
     def _track_tag(kind: str, owner_id: str) -> str:
-        return f"{_TAG_NS}:{kind}:{_tag_safe(owner_id)}"
+        return f"{_TAG_NS}:{kind}:{_tag_clean(owner_id)}"
 
     def _session_tag(self, session_id: str) -> str:
-        return f"{_TAG_NS}:session:{_tag_safe(session_id)}"
+        return f"{_TAG_NS}:session:{_tag_clean(session_id)}"
 
     # ── MemoryBackend ──────────────────────────────────────────────────
 
@@ -258,6 +276,14 @@ class LettaBackend:
         """
         if user_id is None and agent_id is None:
             self.log.warning("recall called without an owner track; skipping")
+            return []
+        if user_id is not None and agent_id is not None:
+            # The contract names this caller-bug territory ("pass one XOR the
+            # other") and requires [] — answering it would silently pick a
+            # track the caller never asked to combine.
+            self.log.warning(
+                "recall called with BOTH user_id and agent_id; the contract defines one XOR the other — returning []"
+            )
             return []
         if user_id is None and agent_id is not None:
             # Flat-backend convention (mem0 / MemOS / Letta, per the host's
@@ -311,7 +337,7 @@ class LettaBackend:
             text = text[: max_chars - 1] + "…"
         status, _, err = await self._request(
             "POST",
-            f"/v1/agents/{self._letta_agent_id}/archival-memory",
+            self._agent_path("archival-memory"),
             json_body={"text": text, "tags": tags},
             timeout=self._timeout("store_timeout_s", _DEFAULT_STORE_TIMEOUT_S),
         )
@@ -325,13 +351,14 @@ class LettaBackend:
             return False
         return True
 
-    async def feedback(self, signal: Mapping[str, Any]) -> None:
+    async def feedback(self, signals: Mapping[str, Any]) -> None:
         """No-op. Raven's feedback signals have no Letta-side consumer yet.
 
         Logged once per kind at debug so the "nothing consumes this" fact is
-        greppable rather than inferred from an empty method.
+        greppable rather than inferred from an empty method. Param name follows
+        the Protocol: the host may call it keyword-wise.
         """
-        kind = signal.get("kind") or signal.get("signal_type") or "?"
+        kind = signals.get("kind") or signals.get("signal_type") or "?"
         self.log.debug("feedback signal %r has no Letta-side handler; ignored", kind)
 
     async def start(self) -> None:
@@ -357,7 +384,7 @@ class LettaBackend:
         else:
             _, _, err = await self._request(
                 "GET",
-                f"/v1/agents/{self._letta_agent_id}",
+                self._agent_path(),
                 timeout=self._timeout("health_timeout_s", _DEFAULT_HEALTH_TIMEOUT_S),
             )
             self._start_problem = f"no long-term memory this session: {err}" if err else None
@@ -398,7 +425,7 @@ class LettaBackend:
             return BackendHealth(ready=False, checks=checks)
         status, _, err = await self._request(
             "GET",
-            f"/v1/agents/{self._letta_agent_id}",
+            self._agent_path(),
             timeout=self._timeout("health_timeout_s", _DEFAULT_HEALTH_TIMEOUT_S),
         )
         if err:
@@ -424,10 +451,19 @@ class LettaBackend:
         tell apart are "gone" and "this could not be removed here". A 404 is
         the ordinary shape of a second click on a row someone already
         removed: not deleted, not an error.
+
+        An id shaped like a path (``..``, any slash) is refused before the
+        request leaves — a raw id in the URL would let the server normalise
+        it into a different resource (round-1 review demonstrated exactly
+        that against the live server). ``False`` is the honest answer: this
+        memory was not deleted here.
         """
+        if _UNSAFE_ID_RE.search(memory_id or ""):
+            self.log.warning("delete refused: memory id %r is not a safe path segment", memory_id)
+            return False
         status, _, err = await self._request(
             "DELETE",
-            f"/v1/agents/{self._letta_agent_id}/archival-memory/{memory_id}",
+            self._agent_path(f"archival-memory/{quote(memory_id, safe='')}"),
             timeout=self._timeout("store_timeout_s", _DEFAULT_STORE_TIMEOUT_S),
         )
         if err:
@@ -440,16 +476,33 @@ class LettaBackend:
         self.log.warning("delete of %s: unexpected HTTP %s", memory_id, status)
         return False
 
-    async def recall_session(self, session_id: str) -> list[Memory]:
-        """Passages tagged with this session, newest store first in rank order.
+    async def recall_session(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> list[Memory]:
+        """Passages tagged with this session (and, when named, one owner track).
 
-        The tag filter is the real selector; the query only has to be there
-        for the endpoint to answer, so the ranking it produces is noise the
-        caller treats as "this session wrote these".
+        Newest store first in rank order. The tag filter is the real selector;
+        the query only has to be there for the endpoint to answer, so the
+        ranking it produces is noise the caller treats as "this conversation
+        wrote these". Capped at 200 passages.
+
+        The host calls this once per track after a sub-agent ran
+        (``recall_session(session_id, user_id=…)`` / ``(…, agent_id=…)``), so
+        the kwargs are part of the contract, not decoration; the track filter
+        keeps the read-back to the passages whose owner ids match the scope
+        that wrote them. Both or neither named: filter on session alone.
         """
+        tags = [self._session_tag(session_id)]
+        if (user_id is None) != (agent_id is None):
+            track, owner = ("user", user_id) if user_id else ("agent", agent_id)
+            tags.append(self._track_tag(track, owner))
         hits, err = await self._search(
             "conversation",
-            tags=[self._session_tag(session_id)],
+            tags=tags,
             top_k=_SESSION_RECALL_LIMIT,
             timeout=self._timeout("recall_timeout_s", _DEFAULT_RECALL_TIMEOUT_S),
         )
@@ -470,7 +523,7 @@ class LettaBackend:
         """Search + project to :class:`Memory`; ``(hits, error)``."""
         status, payload, err = await self._request(
             "GET",
-            f"/v1/agents/{self._letta_agent_id}/archival-memory/search",
+            self._agent_path("archival-memory/search"),
             params={
                 "query": query,
                 "top_k": max(1, int(top_k)),

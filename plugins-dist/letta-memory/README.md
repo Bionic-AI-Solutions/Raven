@@ -18,8 +18,10 @@ beside (not inside) the agent process.
 Verified against Letta **0.16.7** (live OpenAPI schema, 2026-11-05).
 
 Every passage carries tags so one Letta agent's archive stays separable:
-`raven`, `raven:user:<id>`, `raven:agent:<id>`, `raven:session:<id>`. Store
-tags both owner tracks (host defaults from `ServiceLocator`, per-call
+`raven`, `raven:user:<id>`, `raven:agent:<id>`, `raven:session:<id>` — ids ride
+in the tags **verbatim** (the server round-trips arbitrary tag strings; only
+control characters are stripped), so two different ids never share a tag.
+Store tags both owner tracks (host defaults from `ServiceLocator`, per-call
 `metadata` overrides replace them for that passage only) and the session; recall
 searches the user track, and agent-track content stays reachable through
 `recall_session` — the contract's own read-back for a sub-agent's run.
@@ -40,6 +42,12 @@ editing `config.json`:
 | `store_timeout_s` | — | 20.0 | Write/health-side budget; store sits off the answer path. |
 | `health_timeout_s` | — | 5.0 | `health()` probe bound. |
 | `store_max_chars` | — | 8000 | Passage size cap; a longer turn is truncated with `…`. |
+
+The token is read once at startup; rotating it in the secret store takes
+effect at the next process (pod) restart, not mid-run. Identities
+(`user_id`/`agent_id`) come from the host's `memory` config through
+`ctx.services`, never from this slice — the contract's single-source rule:
+two places holding one id let an edit silently split reads from writes.
 
 Enable it: `memory.backend = "letta"` in `~/.raven/config.json` (or
 `raven.config.update.set_memory_backend`), then `raven doctor` should show
